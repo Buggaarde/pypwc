@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+import os
 import xml.etree.cElementTree as ET
 import xml.dom.minidom as minidom
 
@@ -191,22 +192,39 @@ class Component(object):
                 # and MAPPLET.
             raise NotImplementedError('Not currently prioritized. As it stands right now, there is no real reason to handle the xml structure of composite Components.')
 
-
-    def write(self, path):
+    def write(self, path, encoding='utf-8'):
         '''
         Reparse the one-lined default xml and write the prettified version to path.
         '''
-        ugly_string = ET.tostring(self.as_xml().getroot())
-        reparsed = minidom.parseString(ugly_string)
-        with open(path, mode='w', encoding='utf8') as file:
-            file.write(reparsed.toprettyxml(indent='    '))
+        
+        ugly_output = self.as_xml().write('./ugly_tmp.xml', encoding=encoding,
+                                            xml_declaration=False)
+
+        # Using the toprettyxml() method doesn't allow for us to specify 
+        # neither version/encoding nor doctype. These have to be manually added
+        # before the fact.
+        version_and_encoding = '<?xml version="1.0" encoding="Windows-1252"?>\n'
+        doctype = '<!DOCTYPE POWERMART SYSTEM "powrmart.dtd">\n'       
+        with open('./ugly_tmp.xml', mode='r') as ugly:
+            ugly_string = ugly.read()
+            reparsed = minidom.parseString(ugly_string)
+            with open(path, mode='w', encoding=encoding) as file:
+                file.write(version_and_encoding)
+                file.write(doctype)
+
+                # toprettyxml() also have the downside of automatically a version tag,
+                # without the option to disable it. We also have to remove this before
+                # writing to file.  
+                pretty = reparsed.toprettyxml(indent='    ')
+                first_line_in_pretty = pretty.split('\n')[0] + '\n'
+                pretty_without_header = pretty.split(first_line_in_pretty)[-1]
+                file.write(pretty_without_header)
+        os.remove('./ugly_tmp.xml')
 
 
-
-class Canvas(Component, metaclass=ABCMeta):
-    '''Docstring'''
-    def __init__(component_list=[]):
-        # component_list is a list of nestables that should be nested inside the canvas
+class Composite(Component):
+    '''pass'''
+    def __init__(self, component_list=[]):
         self.component_list = component_list
 
 
