@@ -11,8 +11,9 @@ class Component(object):
     _names = []
     _allowed_types = ['SOURCE', 'TARGET', 'EXPRMACRO',
                         'TRANSFORMATION', 'MAPPLET', 'MAPPING',
-                        'FOLDER', 'REPOSITORY', 'POWERMART']
-    def __init__(self,*, name, component_type, component_list=[]):
+                        'FOLDER', 'REPOSITORY', 'POWERMART',
+                        'COMPOSITE']
+    def __init__(self,*, name, component_type):
         self._attributes = {}
         self._fields = []
         self._is_composite = False
@@ -34,11 +35,6 @@ class Component(object):
         else:
             self.component_type = component_type.upper()
 
-        assert isinstance(component_list, list)
-        if component_list:
-            self.is_composite = True
-        self.component_list = component_list
-
     @property
     def is_composite(self):
         return self._is_composite
@@ -47,9 +43,9 @@ class Component(object):
     def is_composite(self, value):
         assert isinstance(value, bool)
         if value == True:
-            if fields:
+            if self.fields:
                 raise ValueError('It makes no sense for composite components to have fields. Found the following fields:\n{}'.format(self.fields))
-            elif attributes:
+            elif self.attributes:
                 raise ValueError('It makes no sense for composite components to have attributes. Found the following attributes:\n{}'.format(self.attributes))
             else: # value = true
                 self._is_composite = value
@@ -80,6 +76,9 @@ class Component(object):
 
 
     def _field_format_is_valid(self, field):
+        '''field must be of the form
+        (NAME, attrib_dict[, [nested_fields]])
+        '''
         if not isinstance(field, tuple):
             msg = 'field is not a tuple'
             return (False, msg)
@@ -118,7 +117,7 @@ class Component(object):
         if not is_valid:
             raise TypeError('Field format is incorrect with the following error message:\n{}'.format(msg))
         else:
-            self.fields += field
+            self.fields.append(field)
 
     def add_fields(self, fields):
         if not hasattr(fields, '__iter__'):
@@ -145,7 +144,7 @@ class Component(object):
         if not set(connect_dict.keys()) <= set(self_fields):
             raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
         other_fields = OtherComponent.get_all_transformfield_names()
-        if not set(connect_dict.vals()) <= set(other_fields):
+        if not set(connect_dict.values()) <= set(other_fields):
             raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
 
         # Declare children and parents
@@ -153,37 +152,43 @@ class Component(object):
         OtherComponent.parents.append(self)
 
         # Construct a new Component with the composite data, and return
-        CompositeComponent = Component()
+        CompositeComponent = Composite(component_list=[self, OtherComponent])
         CompositeComponent.is_composite = True
-        CompositeComponent.component_list.append(self)
-        CompositeComponent.component_list.append(OtherComponent)
-        CompositeComponent.connections.append(
-                (self, OtherComponent, connect_dict)
-            )
+        for key, val in connect_dict.items():
+            connection = {
+                'FROMFIELD': key,
+                'TOFIELD': val,
+                'FROMINSTANCE': self.attributes['NAME'],
+                'TOINSTANCE': OtherComponent.attributes['NAME'],
+                'FROMINSTANCETYPE': self.attributes['TYPE'],
+                'TOINSTANCETYPE': OtherComponent.attributes['TYPE']
+            }
+            CompositeComponent.connection_list.append(connection)
 
         return CompositeComponent
 
 
 
-    def _add_subelements_to_root_not_composite(self, root, fields):
+    def _add_subelements_to_root(self, root, fields):
         for f in fields:
-            assert (len(f) == 2 or len(f) == 3)
+            assert isinstance(f, tuple), 'f is type {}'.format(type(f))
+            assert (len(f) == 2 or len(f) == 3), 'Length of fields-tuple is {}\n{}'.format(len(f), f)
             if len(f) == 2: # No nested fields
                 fieldtype, attrib_dict = f
                 ET.SubElement(root, fieldtype, attrib=attrib_dict)
             elif len(f) == 3: # Yes nested fields
                 fieldtype, attrib_dict, nested_fields = f
                 local_root = ET.Element(fieldtype, attrib=attrib_dict)
-                self._add_subelements_to_root_not_composite(local_root, nested_fields)
+                self._add_subelements_to_root(local_root, nested_fields)
                 root.append(local_root)
 
 
     def as_xml(self):
         '''Returns an ElementTree with the apppropriate children
-        and attributes'''
+        and attributes.'''
         if not self.is_composite:
             root = ET.Element(self.component_type, attrib=self.attributes)
-            self._add_subelements_to_root_not_composite(root, self.fields)
+            self._add_subelements_to_root(root, self.fields)
             TREE = ET.ElementTree(root)
             return TREE
         else:   # In the Component base class, the returned XML of composite
@@ -224,8 +229,94 @@ class Component(object):
 
 class Composite(Component):
     '''pass'''
-    def __init__(self, component_list=[]):
+    def __init__(self, component_list=[], connection_list=[]):
         self.component_list = component_list
+        self.connection_list = connection_list
+        super().__init__(name='Composite', component_type='COMPOSITE')
+
+    def as_xml(self):
+        root = ET.Element('COMPOSITE')
+        for component in self.component_list:
+            comp_root = component.as_xml().getroot()
+            root.append(comp_root)
+        for component in self.component_list:
+            att = component.attributes
+            instance_attributes = {
+                'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+                'NAME': '' if not att['NAME'] else att['NAME'],
+                'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+                'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+                'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+                'TYPE': '' if not component.component_type else component.component_type 
+            }
+            ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
+        for connection in self.connection_list:
+            ET.SubElement(root, 'CONNECTOR', attrib=connection)
+        return ET.ElementTree(root)
+
+    def write(self, path, encoding='utf-8'):
+        '''
+        Reparse the one-lined default xml and write the prettified version to path.
+        '''
+        
+        ugly_output = self.as_xml().write('./ugly_tmp.xml', encoding=encoding,
+                                            xml_declaration=False)
+
+        # Using the toprettyxml() method doesn't allow for us to specify 
+        # neither version, encoding nor doctype. These have to be manually added
+        # before the fact.
+        version_and_encoding = '<?xml version="1.0" encoding="Windows-1252"?>\n'
+        doctype = '<!DOCTYPE POWERMART SYSTEM "powrmart.dtd">\n'       
+        with open('./ugly_tmp.xml', mode='r') as ugly:
+            ugly_string = ugly.read()
+            reparsed = minidom.parseString(ugly_string)
+            with open(path, mode='w', encoding=encoding) as file:
+                file.write(version_and_encoding)
+                file.write(doctype)
+
+                # toprettyxml() also have the downside of automatically a version tag,
+                # without the option to disable it. We also have to remove this before
+                # writing to file.  
+                pretty = reparsed.toprettyxml(indent='    ')
+                first_line_in_pretty = pretty.split('\n')[0] + '\n'
+                pretty_without_header = pretty.split(first_line_in_pretty)[-1]
+                file.write(pretty_without_header)
+        os.remove('./ugly_tmp.xml')
+
+
+class Mapping(Composite):
+    '''Docstring'''
+    def __init__(self, component_list=[]):
+        super().__init__(component_list)
+    
+    def write(self, path, encoding='utf-8'):
+        '''
+        Reparse the one-lined default xml and write the prettified version to path.
+        '''
+        
+        ugly_output = self.as_xml().write('./ugly_tmp.xml', encoding=encoding,
+                                            xml_declaration=False)
+
+        # Using the toprettyxml() method doesn't allow for us to specify 
+        # neither version, encoding nor doctype. These have to be manually added
+        # before the fact.
+        version_and_encoding = '<?xml version="1.0" encoding="Windows-1252"?>\n'
+        doctype = '<!DOCTYPE POWERMART SYSTEM "powrmart.dtd">\n'       
+        with open('./ugly_tmp.xml', mode='r') as ugly:
+            ugly_string = ugly.read()
+            reparsed = minidom.parseString(ugly_string)
+            with open(path, mode='w', encoding=encoding) as file:
+                file.write(version_and_encoding)
+                file.write(doctype)
+
+                # toprettyxml() also have the downside of automatically a version tag,
+                # without the option to disable it. We also have to remove this before
+                # writing to file.  
+                pretty = reparsed.toprettyxml(indent='    ')
+                first_line_in_pretty = pretty.split('\n')[0] + '\n'
+                pretty_without_header = pretty.split(first_line_in_pretty)[-1]
+                file.write(pretty_without_header)
+        os.remove('./ugly_tmp.xml')
 
 
     
