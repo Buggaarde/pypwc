@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 import os
+from datetime import datetime
 import xml.etree.cElementTree as ET
 import xml.dom.minidom as minidom
 
@@ -13,7 +14,7 @@ class Component(object):
                         'TRANSFORMATION', 'MAPPLET', 'MAPPING',
                         'FOLDER', 'REPOSITORY', 'POWERMART',
                         'COMPOSITE']
-    def __init__(self,*, name, component_type):
+    def __init__(self, name, component_type):
         self._attributes = {}
         self._fields = []
         self._is_composite = False
@@ -167,7 +168,8 @@ class Component(object):
 
         return CompositeComponent
 
-
+    def as_instance(self):
+        raise NotImplementedError
 
     def _add_subelements_to_root(self, root, fields):
         for f in fields:
@@ -229,10 +231,39 @@ class Component(object):
 
 class Composite(Component):
     '''pass'''
-    def __init__(self, component_list=[], connection_list=[]):
+    def __init__(self, name='Composite', component_type='COMPOSITE',
+                 component_list=[], connection_list=[]):
         self.component_list = component_list
         self.connection_list = connection_list
-        super().__init__(name='Composite', component_type='COMPOSITE')
+        super().__init__(name, component_type)
+
+    def connect(self, FromComponent, ToComponent, connect_dict):
+        # Make sure that the two components in fact contain the fields from the dict
+        from_fields = FromComponent.get_all_transformfield_names()
+        if not set(connect_dict.keys()) <= set(from_fields):
+            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
+        to_fields = ToComponent.get_all_transformfield_names()
+        if not set(connect_dict.values()) <= set(to_fields):
+            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
+
+        # Declare children and parents
+        FromComponent.children.append(ToComponent)
+        ToComponent.parents.append(FromComponent)
+
+        # self.component_list.append(FromComponent)
+        # self.component_list.append(ToComponent)
+
+        # Append connection to
+        for key, val in connect_dict.items():
+            connection = {
+                'FROMFIELD': key,
+                'TOFIELD': val,
+                'FROMINSTANCE': FromComponent.attributes['NAME'],
+                'TOINSTANCE': ToComponent.attributes['NAME'],
+                'FROMINSTANCETYPE': FromComponent.attributes['TYPE'],
+                'TOINSTANCETYPE': ToComponent.attributes['TYPE']
+            }
+            self.connection_list.append(connection)
 
     def as_xml(self):
         root = ET.Element('COMPOSITE')
@@ -240,16 +271,17 @@ class Composite(Component):
             comp_root = component.as_xml().getroot()
             root.append(comp_root)
         for component in self.component_list:
-            att = component.attributes
-            instance_attributes = {
-                'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
-                'NAME': '' if not att['NAME'] else att['NAME'],
-                'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
-                'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
-                'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
-                'TYPE': '' if not component.component_type else component.component_type 
-            }
-            ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
+            root.append(component.as_instance().getroot())
+            # att = component.attributes
+            # instance_attributes = {
+            #     'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+            #     'NAME': '' if not att['NAME'] else att['NAME'],
+            #     'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+            #     'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+            #     'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+            #     'TYPE': '' if not component.component_type else component.component_type 
+            # }
+            # ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
         for connection in self.connection_list:
             ET.SubElement(root, 'CONNECTOR', attrib=connection)
         return ET.ElementTree(root)
@@ -286,9 +318,80 @@ class Composite(Component):
 
 class Mapping(Composite):
     '''Docstring'''
-    def __init__(self, component_list=[]):
-        super().__init__(component_list)
+    def __init__(self, name, component_list=[], connection_list=[]):
+        super().__init__(name, component_type='Mapping',
+                         component_list=component_list,
+                         connection_list=connection_list)
+        self.sources = []
+        self.targets = []
     
+    def as_xml(self):
+        now = datetime.now()
+        year, month, day = now.year, now.month, now.day
+        hour, minute, second = now.hour, now.minute, now.second
+        timestamp = '{:02d}/{:02d}/{} {:02d}:{:02d}:{:02d}'.format(
+            month, day, year,
+            hour, minute, second
+        )
+        powermart_attributes = {
+            'CREATION_DATE': timestamp,
+            'REPOSITORY_VERSION': '182.91'
+            }
+        powermart = ET.Element('POWERMART', attrib=powermart_attributes)
+        
+        repository_attibutes = {
+            'NAME': 'Dev_Repository',
+            'VERSION': '182',
+            'CODEPAGE': 'MS1252',
+            'DATABASETYPE': 'Microsoft SQL Server'
+        }
+        repository = ET.Element('REPOSITORY', attrib=repository_attibutes)
+
+        folder_attributes = {
+            'NAME': 'MDW_KRE',
+            'GROUP': '',
+            'OWNER': 'BIX_PWC_DEV',
+            'SHARED': 'NOTSHARED',
+            'DESCRIPTION': '',
+            'PERMISSIONS': 'rwx---r--',
+            'UUID': 'ba3a066c-b172-4542-82f0-337e40e92b32'
+        }
+        folder = ET.Element('FOLDER', attrib=folder_attributes)
+
+        powermart.append(repository)
+        repository.append(folder)
+        root = folder
+
+        for source in self.sources:
+            root.append(source.as_xml().getroot())
+        for target in self.targets:
+            root.append(target.as_xml().getroot())
+        for exprmacro in self.get_all_exprmacros():
+            root.append(exprmacro.as_xml().getroot())
+        for reusable in self.get_all_reusable_transformations():
+            root.append(reusable.as_xml().getroot())
+        for mapplet in self.get_all_mapplets():
+            root.append(mapplet.as_xml().getroot())
+        for component in self.mapping_only_component_list:
+            root.append(component.as_xml().getroot())
+        for component in self.mapping_only_component_list:
+            root.append(component.as_instance().getroot())
+
+            # att = component.attributes
+            # instance_attributes = {
+            #     'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+            #     'NAME': '' if not att['NAME'] else att['NAME'],
+            #     'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+            #     'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+            #     'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+            #     'TYPE': '' if not component.component_type else component.component_type 
+            # }
+            # ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
+        for connection in self.connection_list:
+            ET.SubElement(root, 'CONNECTOR', attrib=connection)
+        return ET.ElementTree(powermart)
+
+
     def write(self, path, encoding='utf-8'):
         '''
         Reparse the one-lined default xml and write the prettified version to path.
@@ -318,6 +421,20 @@ class Mapping(Composite):
                 file.write(pretty_without_header)
         os.remove('./ugly_tmp.xml')
 
+    def get_all_mapplets(self):
+        return []
 
+    def get_all_exprmacros(self):
+        return []
+
+    def get_all_reusable_transformations(self):
+        return []
+
+    def get_all_connections(self):
+        return []
+
+    @property
+    def mapping_only_component_list(self):
+        return self.component_list
     
 

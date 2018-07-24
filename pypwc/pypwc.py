@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 from Transformations import Expression
-from Canvas import Composite
+from Canvas import Composite, Mapping
     
 
             # <TRANSFORMFIELD DATATYPE ="bigint" DEFAULTVALUE ="" DESCRIPTION ="" NAME ="in_LINE_NR" PICTURETEXT ="" PORTTYPE ="OUTPUT" PRECISION ="19" SCALE ="0"/>
@@ -23,7 +23,8 @@ if __name__ == '__main__':
         'SCALE': '0'
         }
     fields = [
-        ('TRANSFORMFIELD', field_dict)
+        ('TRANSFORMFIELD', field_dict),
+        ('TABLEATTRIBUTE', {'NAME': 'Tracing Level', 'VALUE': 'Normal'})
     ]
     Exp.add_fields(fields)
 
@@ -43,7 +44,8 @@ if __name__ == '__main__':
         'SCALE': '0'
         }
     fields1 = [
-        ('TRANSFORMFIELD', field_dict)
+        ('TRANSFORMFIELD', field_dict),
+        ('TABLEATTRIBUTE', {'NAME': 'Tracing Level', 'VALUE': 'Normal'})
     ]
     Exp1.add_fields(fields1)
     # print(Exp1.fields)
@@ -54,3 +56,7 @@ if __name__ == '__main__':
     print(component_list)
     Comp = Exp.connect_to(Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Comp.write(r'./Comp.xml')
+
+    Map = Mapping(name='Map', component_list=component_list)
+    Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
+    Map.write(r'./Map.xml')
