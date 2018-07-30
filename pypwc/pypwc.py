@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 from Transformations import Expression
-from Canvas import Composite, Mapping
+from Canvas import Composite, Mapping, Mapplet
     
 
             # <TRANSFORMFIELD DATATYPE ="bigint" DEFAULTVALUE ="" DESCRIPTION ="" NAME ="in_LINE_NR" PICTURETEXT ="" PORTTYPE ="OUTPUT" PRECISION ="19" SCALE ="0"/>
@@ -8,8 +8,8 @@ from Canvas import Composite, Mapping
 if __name__ == '__main__':
     Exp = Expression()
     Exp.type = 'Aggregator'
-    Exp.name = 'Test<>&'
-    Exp.reusable = 'yes'
+    Exp.name = 'Test'
+    Exp.reusable = 'no'
     field_dict = {
         'DATATYPE': 'bigint',
         'DEFAULTVALUE': '',
@@ -53,10 +53,13 @@ if __name__ == '__main__':
 
 
     component_list = [Exp, Exp1]
-    print(component_list)
     Comp = Exp.connect_to(Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Comp.write(r'./Comp.xml')
 
-    Map = Mapping(name='Map', component_list=component_list)
+    Map = Mapping(name='m_Map', component_list=component_list)
     Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Map.write(r'./Map.xml')
+
+    Mapplet = Mapplet(name='mplt_MAPPLET', component_list=component_list)
+    Mapplet.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
+    Mapplet.write(r'./Mapplet.xml')

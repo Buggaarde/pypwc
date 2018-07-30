@@ -4,13 +4,14 @@ from datetime import datetime
 import xml.etree.cElementTree as ET
 import xml.dom.minidom as minidom
 
+
 class Component(object):
     '''Anything that resides in a canvas should be a component
     and any combination of components should themselves be components.
     
     Implements the composite design pattern.'''
     _names = []
-    _allowed_types = ['SOURCE', 'TARGET', 'EXPRMACRO',
+    _allowed_component_types = ['SOURCE', 'TARGET', 'EXPRMACRO',
                         'TRANSFORMATION', 'MAPPLET', 'MAPPING',
                         'FOLDER', 'REPOSITORY', 'POWERMART',
                         'COMPOSITE']
@@ -18,6 +19,7 @@ class Component(object):
         self._attributes = {}
         self._fields = []
         self._is_composite = False
+        self.is_reusable = False
 
         self.parents = []
         self.children = []
@@ -31,8 +33,8 @@ class Component(object):
             Component._names.append(name)
 
         assert isinstance(component_type, str)
-        if component_type.upper() not in Component._allowed_types:
-            raise ValueError('component_type: {0} not an allowed type. Allowed types are\n{1}'.format(component_type, Component._allowed_types))
+        if component_type.upper() not in Component._allowed_component_types:
+            raise ValueError('component_type: {0} not an allowed type. Allowed types are\n{1}'.format(component_type, Component._allowed_component_types))
         else:
             self.component_type = component_type.upper()
 
@@ -59,10 +61,7 @@ class Component(object):
 
     @attributes.setter
     def attributes(self, value):
-        if self.is_composite:
-            raise ValueError('The Component is composite. Composite components should have no attributes.')
-        else:
-            self._attributes = value
+        self._attributes = value
 
     @property
     def fields(self):
@@ -70,10 +69,7 @@ class Component(object):
 
     @fields.setter
     def fields(self, value):
-        if self.is_composite:
-            raise ValueError('The Component is composite. Composite Components should have no fields.')
-        else:
-            self._fields = value
+        self._fields = value
 
 
     def _field_format_is_valid(self, field):
@@ -250,9 +246,6 @@ class Composite(Component):
         FromComponent.children.append(ToComponent)
         ToComponent.parents.append(FromComponent)
 
-        # self.component_list.append(FromComponent)
-        # self.component_list.append(ToComponent)
-
         # Append connection to
         for key, val in connect_dict.items():
             connection = {
@@ -265,6 +258,24 @@ class Composite(Component):
             }
             self.connection_list.append(connection)
 
+    def get_all_mapplets(self):
+        return [comp for comp in self.component_list if isinstance(comp, Mapplet)]
+
+    def get_all_exprmacros(self):
+        return []
+
+    def get_all_reusable_transformations(self):
+        return [comp for comp in self.component_list 
+                if (self.component_type == 'TRANSFORMATION'
+                    and self.is_reusable is True)]
+
+    def get_all_connections(self):
+        return []
+
+    @property
+    def all_non_global_components(self):
+        return self.component_list
+
     def as_xml(self):
         root = ET.Element('COMPOSITE')
         for component in self.component_list:
@@ -272,31 +283,27 @@ class Composite(Component):
             root.append(comp_root)
         for component in self.component_list:
             root.append(component.as_instance().getroot())
-            # att = component.attributes
-            # instance_attributes = {
-            #     'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
-            #     'NAME': '' if not att['NAME'] else att['NAME'],
-            #     'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
-            #     'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
-            #     'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
-            #     'TYPE': '' if not component.component_type else component.component_type 
-            # }
-            # ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
         for connection in self.connection_list:
             ET.SubElement(root, 'CONNECTOR', attrib=connection)
         return ET.ElementTree(root)
 
     def write(self, path, encoding='utf-8'):
         '''
-        Reparse the one-lined default xml and write the prettified version to path.
+        Write the result of the as_xml()-method to file, and prepends
+        xml version and doctype.
+
+        By default, as_xml() writes a one-lined version of the xml document, 
+        so care is taken to prettify the output before writing.
         '''
         
+        # Write the one-lined output to a temporary file so as to be able
+        # to parse the xml separately later.
         ugly_output = self.as_xml().write('./ugly_tmp.xml', encoding=encoding,
                                             xml_declaration=False)
 
         # Using the toprettyxml() method doesn't allow for us to specify 
-        # neither version, encoding nor doctype. These have to be manually added
-        # before the fact.
+        # neither version, encoding nor doctype. These have to be manually
+        # prepended,
         version_and_encoding = '<?xml version="1.0" encoding="Windows-1252"?>\n'
         doctype = '<!DOCTYPE POWERMART SYSTEM "powrmart.dtd">\n'       
         with open('./ugly_tmp.xml', mode='r') as ugly:
@@ -306,9 +313,9 @@ class Composite(Component):
                 file.write(version_and_encoding)
                 file.write(doctype)
 
-                # toprettyxml() also have the downside of automatically a version tag,
-                # without the option to disable it. We also have to remove this before
-                # writing to file.  
+                # toprettyxml() also have the downside of automatically adding
+                # a version tag, without the option to disable it. We also have
+                # to remove this before writing to file.  
                 pretty = reparsed.toprettyxml(indent='    ')
                 first_line_in_pretty = pretty.split('\n')[0] + '\n'
                 pretty_without_header = pretty.split(first_line_in_pretty)[-1]
@@ -372,69 +379,107 @@ class Mapping(Composite):
             root.append(reusable.as_xml().getroot())
         for mapplet in self.get_all_mapplets():
             root.append(mapplet.as_xml().getroot())
-        for component in self.mapping_only_component_list:
-            root.append(component.as_xml().getroot())
-        for component in self.mapping_only_component_list:
-            root.append(component.as_instance().getroot())
 
-            # att = component.attributes
-            # instance_attributes = {
-            #     'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
-            #     'NAME': '' if not att['NAME'] else att['NAME'],
-            #     'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
-            #     'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
-            #     'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
-            #     'TYPE': '' if not component.component_type else component.component_type 
-            # }
-            # ET.SubElement(root, 'INSTANCE', attrib=instance_attributes)
+        mapping = ET.Element('MAPPING', attrib={
+            'DESCRIPTION': '',
+            'ISVALID': 'YES',
+            'NAME': self.name,
+            'OBJECTVERSION': '1',
+            'VERSIONNUMBER': '1'
+        })
+        root.append(mapping)
+        root = mapping
+    
+        for component in self.all_non_global_components:
+            root.append(component.as_xml().getroot())
+        for component in self.all_non_global_components:
+            root.append(component.as_instance().getroot())
         for connection in self.connection_list:
             ET.SubElement(root, 'CONNECTOR', attrib=connection)
+        ET.SubElement(root, 'ERPINFO')
+        
         return ET.ElementTree(powermart)
 
 
-    def write(self, path, encoding='utf-8'):
-        '''
-        Reparse the one-lined default xml and write the prettified version to path.
-        '''
-        
-        ugly_output = self.as_xml().write('./ugly_tmp.xml', encoding=encoding,
-                                            xml_declaration=False)
-
-        # Using the toprettyxml() method doesn't allow for us to specify 
-        # neither version, encoding nor doctype. These have to be manually added
-        # before the fact.
-        version_and_encoding = '<?xml version="1.0" encoding="Windows-1252"?>\n'
-        doctype = '<!DOCTYPE POWERMART SYSTEM "powrmart.dtd">\n'       
-        with open('./ugly_tmp.xml', mode='r') as ugly:
-            ugly_string = ugly.read()
-            reparsed = minidom.parseString(ugly_string)
-            with open(path, mode='w', encoding=encoding) as file:
-                file.write(version_and_encoding)
-                file.write(doctype)
-
-                # toprettyxml() also have the downside of automatically a version tag,
-                # without the option to disable it. We also have to remove this before
-                # writing to file.  
-                pretty = reparsed.toprettyxml(indent='    ')
-                first_line_in_pretty = pretty.split('\n')[0] + '\n'
-                pretty_without_header = pretty.split(first_line_in_pretty)[-1]
-                file.write(pretty_without_header)
-        os.remove('./ugly_tmp.xml')
-
-    def get_all_mapplets(self):
-        return []
-
-    def get_all_exprmacros(self):
-        return []
-
-    def get_all_reusable_transformations(self):
-        return []
-
-    def get_all_connections(self):
-        return []
-
-    @property
-    def mapping_only_component_list(self):
-        return self.component_list
     
+
+
+    
+
+class Mapplet(Composite):
+    '''Docstring'''
+    def __init__(self, name, component_list=[], connection_list=[]):
+        super().__init__(name, component_type='Mapplet',
+                         component_list=component_list,
+                         connection_list=connection_list)
+        self.sources = []
+        self.targets = []
+    
+    def as_xml(self):
+        now = datetime.now()
+        year, month, day = now.year, now.month, now.day
+        hour, minute, second = now.hour, now.minute, now.second
+        timestamp = '{:02d}/{:02d}/{} {:02d}:{:02d}:{:02d}'.format(
+            month, day, year,
+            hour, minute, second
+        )
+        powermart_attributes = {
+            'CREATION_DATE': timestamp,
+            'REPOSITORY_VERSION': '182.91'
+            }
+        powermart = ET.Element('POWERMART', attrib=powermart_attributes)
+        
+        repository_attibutes = {
+            'NAME': 'Dev_Repository',
+            'VERSION': '182',
+            'CODEPAGE': 'MS1252',
+            'DATABASETYPE': 'Microsoft SQL Server'
+        }
+        repository = ET.Element('REPOSITORY', attrib=repository_attibutes)
+
+        folder_attributes = {
+            'NAME': 'MDW_KRE',
+            'GROUP': '',
+            'OWNER': 'BIX_PWC_DEV',
+            'SHARED': 'NOTSHARED',
+            'DESCRIPTION': '',
+            'PERMISSIONS': 'rwx---r--',
+            'UUID': 'ba3a066c-b172-4542-82f0-337e40e92b32'
+        }
+        folder = ET.Element('FOLDER', attrib=folder_attributes)
+
+        powermart.append(repository)
+        repository.append(folder)
+        root = folder
+
+        for source in self.sources:
+            root.append(source.as_xml().getroot())
+        for target in self.targets:
+            root.append(target.as_xml().getroot())
+        for exprmacro in self.get_all_exprmacros():
+            root.append(exprmacro.as_xml().getroot())
+        for reusable in self.get_all_reusable_transformations():
+            root.append(reusable.as_xml().getroot())
+        for mapplet in self.get_all_mapplets():
+            root.append(mapplet.as_xml().getroot())
+
+        mapping = ET.Element('MAPPLET', attrib={
+            'DESCRIPTION': '',
+            'ISVALID': 'YES',
+            'NAME': self.name,
+            'OBJECTVERSION': '1',
+            'VERSIONNUMBER': '1'
+        })
+        root.append(mapping)
+        root = mapping
+    
+        for component in self.all_non_global_components:
+            root.append(component.as_xml().getroot())
+        for component in self.all_non_global_components:
+            root.append(component.as_instance().getroot())
+        for connection in self.connection_list:
+            ET.SubElement(root, 'CONNECTOR', attrib=connection)
+        ET.SubElement(root, 'ERPINFO')
+        
+        return ET.ElementTree(powermart)
 
