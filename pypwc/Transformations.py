@@ -19,7 +19,7 @@ class Transformation(Component, metaclass=ABCMeta):
         self._version_number = version_number
 
         super().__init__(name=name, component_type='TRANSFORMATION')
-        self.fields = [(self.component_type, {'NAME': 'Tracing Level', 'VALUE': 'Normal'})]
+        self.fields = []
         
 
 
@@ -94,30 +94,23 @@ class Transformation(Component, metaclass=ABCMeta):
             'TYPE': self._type,
             'VERSIONNUMBER': self._version_number
         }
+
+    def as_instance(self):
+        att = self.attributes
+        attribute_dict = {
+            'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+            'NAME': '' if not att['NAME'] else att['NAME'],
+            'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+            'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+            'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+            'TYPE': '' if not self.component_type else self.component_type
+        }
+        root = ET.Element('INSTANCE', attrib=attribute_dict)
+        return ET.ElementTree(root)
     ## End properties section
 
     ## Begin methods section
-    # def as_xml(self):
-    #     '''Returns an ElementTree with the apppropriate children
-    #     and attributes'''
-    #     transformation = ET.Element('TRANSFORMATION',
-    #                                 attrib=self.transformation_attribute_dict)
-    #     for tf in self.transform_fields:
-    #         ET.SubElement(transformation, 'TRANSFORMFIELD', attrib=tf)
-    #     for name, value in self.table_attributes.items():
-    #         ET.SubElement(transformation, 'TABLEATTRIBUTES',
-    #                           attrib={'NAME': name, 'VALUE': value})
-    #     TREE = ET.ElementTree(transformation)
-    #     return TREE
-    
-    # def write_to_xml(self, path):
-    #     '''
-    #     Reparse the one-lined default xml and write the prettified version to path.
-    #     '''
-    #     ugly_string = ET.tostring(self.as_xml().getroot())
-    #     reparsed = minidom.parseString(ugly_string)
-    #     with open(path, mode='w', encoding='utf8') as file:
-    #         file.write(reparsed.toprettyxml(indent='    '))
+
 
 
 class Expression(Transformation):
