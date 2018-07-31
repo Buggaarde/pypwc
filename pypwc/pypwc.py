@@ -1,10 +1,6 @@
-import xml.etree.ElementTree as ET
 from Transformations import Expression
 from Canvas import Composite, Mapping, Mapplet
     
-
-            # <TRANSFORMFIELD DATATYPE ="bigint" DEFAULTVALUE ="" DESCRIPTION ="" NAME ="in_LINE_NR" PICTURETEXT ="" PORTTYPE ="OUTPUT" PRECISION ="19" SCALE ="0"/>
-
 if __name__ == '__main__':
     Exp = Expression()
     # Exp.type = 'Aggregator'
@@ -54,13 +50,41 @@ if __name__ == '__main__':
     Comp = Exp.connect_to(Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Comp.write(r'./Comp.xml')
 
-    # Map = Mapping(name='m_Map', component_list=component_list)
-    # Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
-    # Map.write(r'./Map.xml')
+    Comp1 = Composite(name='Composite1')
 
-    Mapplet = Mapplet(name='mplt_MAPPLET', component_list=component_list)
-    Mapplet.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
-    Mapplet.write(r'./Mapplet.xml')
+    Map = Mapping(name='m_Map', component_list=component_list)#, connection_list=Comp.connection_list)
+    Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
+    Map.write(r'./Map.xml')
 
-    MapMapplet = Mapping(name='m_MapMapplet', component_list=[Mapplet])
+    Mplt1 = Mapplet(name='mplt_test')
+    
+    Mplt = Mapplet(name='mplt_MAPPLET', component_list=component_list, connection_list=Comp.connection_list)
+    input_fields = [('TRANSFORMFIELD', {
+        'DATATYPE': 'bigint',
+        'DEFAULTVALUE': '',
+        'DESCRIPTION': '',
+        'NAME': 'in_ANDEL_AF_LAAN_X',
+        'PICTURETEXT': '',
+        'PORTTYPE': 'OUTPUT',
+        'PRECISION': '19',
+        'SCALE': '0'
+    })]
+    Mplt.Input.add_fields(input_fields)
+    output_fields = [('TRANSFORMFIELD', {
+        'DATATYPE': 'bigint',
+        'DEFAULTVALUE': '',
+        'DESCRIPTION': '',
+        'NAME': 'out_ANDEL_AF_LAAN_X',
+        'PICTURETEXT': '',
+        'PORTTYPE': 'INPUT',
+        'PRECISION': '19',
+        'SCALE': '0'
+    })]
+    Mplt.Output.add_fields(output_fields)
+    Mplt.connect(Mplt.Input, Exp, {'in_ANDEL_AF_LAAN_X': 'ANDEL_AF_LAAN_X'})
+    Mplt.connect(Exp1, Mplt.Output, {'LINE_NR': 'out_ANDEL_AF_LAAN_X'})
+    Mplt.write(r'./Mapplet.xml')
+
+
+    MapMapplet = Mapping(name='m_MapMapplet', component_list=[Mplt, Mplt1])
     MapMapplet.write(r'./MapMapplet.xml')

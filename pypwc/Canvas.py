@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
-import os
+from copy import deepcopy
 from datetime import datetime
+import os
 import xml.etree.cElementTree as ET
 import xml.dom.minidom as minidom
 
@@ -15,6 +16,7 @@ class Component(object):
                         'TRANSFORMATION', 'MAPPLET', 'MAPPING',
                         'FOLDER', 'REPOSITORY', 'POWERMART',
                         'COMPOSITE']
+    _counter = 0
     def __init__(self, name, component_type):
         self._attributes = {}
         self._fields = []
@@ -168,12 +170,22 @@ class Component(object):
                 'FROMINSTANCETYPE': self.attributes['TYPE'],
                 'TOINSTANCETYPE': OtherComponent.attributes['TYPE']
             }
-            CompositeComponent.connection_list.append(connection)
+            CompositeComponent.connection_list += [connection]
 
         return CompositeComponent
 
     def as_instance(self):
-        raise NotImplementedError
+        att = self.attributes
+        attribute_dict = {
+            'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+            'NAME': '' if not att['NAME'] else att['NAME'],
+            'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+            'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+            'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+            'TYPE': '' if not self.component_type else self.component_type
+        }
+        root = ET.Element('INSTANCE', attrib=attribute_dict)
+        return ET.ElementTree(root)
 
     def _add_subelements_to_root(self, root, fields):
         for f in fields:
@@ -237,34 +249,48 @@ class Component(object):
 class Composite(Component):
     '''pass'''
     def __init__(self, name='Composite', component_type='COMPOSITE',
-                 component_list=[], connection_list=[]):
-        self.component_list = component_list
-        # print(self.component_list)
-        self.connection_list = connection_list
-        # print(self.connection_list)
-        self.component_list_names = [comp.name for comp in self.component_list]
+                 component_list=None, connection_list=None):
+
+        super().__init__(name, component_type)
+        
+        if component_list is None:
+            self._component_list = []
+        else:
+            assert isinstance(component_list, list), 'Expected a list; was {}'.format(type(component_list))
+            self._component_list = component_list
+
+
+        if self.component_type == 'MAPPLET':
+            for component in self.component_list:
+                if component.component_type == 'MAPPLET':
+                    raise ValueError('Mapplets cannot be nested. Found Mapplet in component_list.')
+
+        if connection_list is None:
+            self.connection_list = []
+        else:
+            assert isinstance(connection_list, list), 'Expected a list; was {}'.format(type(connection_list))
+            self.connection_list = connection_list        
+       
         for connection in self.connection_list:
-            # print(connection)
             from_component_name = connection['FROMINSTANCE']
             from_component_field = connection['FROMFIELD']
             from_component_type = connection['FROMINSTANCETYPE']            
             to_component_name = connection['TOINSTANCE']
             to_component_field = connection['TOFIELD']
-            to_component_type = connection['TOINSTANCETYPE']
+            to_component_type = connection['TOINSTANCETYPE']       
 
-            assert(from_component_type in Component._allowed_component_types)
-            assert(to_component_type in Component._allowed_component_types)            
-
-            assert(from_component_name in self.component_list_names)
-            assert(to_component_name in self.component_list_names)
+            assert from_component_name in self.component_list_names, \
+                    '{} not in component names {}'.format(from_component_name, self.component_list_names)
+            assert to_component_name in self.component_list_names, \
+                    '{} not in component names'.format(to_component_name)
             FromComponent = [comp for comp in self.component_list
                              if comp.name == from_component_name][0]
             ToComponent = [comp for comp in self.component_list
                              if comp.name == to_component_name][0]
 
-            assert(from_component_field 
+            assert (from_component_field 
                     in FromComponent.get_all_transformfield_names())
-            assert(to_component_field 
+            assert (to_component_field 
                     in ToComponent.get_all_transformfield_names())
 
             if ToComponent not in FromComponent.children:
@@ -272,8 +298,12 @@ class Composite(Component):
             if FromComponent not in ToComponent.parents:
                 ToComponent.parents.append(FromComponent)
         
+
+
         self.sources = []
         self.targets = []
+        self.input = []
+        self.output = []
         
         self._now = datetime.now()
         year, month, day = self._now.year, self._now.month, self._now.day
@@ -304,22 +334,46 @@ class Composite(Component):
 
         self.instance_transformations = []
 
-        super().__init__(name, component_type)
+    @property
+    def component_list(self):
+        pass
+    
+    @component_list.getter
+    def component_list(self):
+        return self._component_list
+
+    @component_list.setter
+    def component_list(self, new_list):
+        s = 'You cannot directly assign values to component_list. Use the add_component().method instead.'
+        raise ValueError(s)
+    
+    def add_component(self, new_component):
+        self._component_list.append(new_component)
+
+    def add_components(self, new_components):
+        for comp in new_components:
+            self._component_list.append(comp)
+
+    @property
+    def component_list_names(self):
+        return [comp.name for comp in self.component_list]
 
     def connect(self, FromComponent, ToComponent, connect_dict):
         # Make sure that the two components in fact contain the fields from the dict
         from_fields = FromComponent.get_all_transformfield_names()
         if not set(connect_dict.keys()) <= set(from_fields):
-            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
+            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS of FromComponent')
         to_fields = ToComponent.get_all_transformfield_names()
         if not set(connect_dict.values()) <= set(to_fields):
-            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS')
+            raise ValueError('There are fields in connect_dict that are not contained in the set of TRANSFORMFIELDS of ToComponent')
 
         # Declare children and parents
-        FromComponent.children.append(ToComponent)
-        ToComponent.parents.append(FromComponent)
+        if ToComponent not in FromComponent.children:
+            FromComponent.children.append(ToComponent)
+        if FromComponent not in ToComponent.parents:
+            ToComponent.parents.append(FromComponent)
 
-        # Append connection to
+        # Append connection to connection_list
         for key, val in connect_dict.items():
             connection = {
                 'FROMFIELD': key,
@@ -378,7 +432,7 @@ class Composite(Component):
                 root.append(element)
 
         instance = ET.Element(self.component_type.upper(), attrib={
-            'DESCRIPTION': '{} made with pypwc (contact SBS for more information)'.format(self.component_type),
+            'DESCRIPTION': '{} made with pypwc (contact SBS for more information)'.format(self.component_type.title()),
             'ISVALID': 'YES',
             'NAME': self.name,
             'OBJECTVERSION': '1',
@@ -391,7 +445,7 @@ class Composite(Component):
             root.append(component.as_xml().getroot())
         for component in self.instance_transformations:
             root.append(component.as_xml().getroot())
-        for component in self.all_non_global_components+self.get_all_mapplets():
+        for component in self.component_list:
             root.append(component.as_instance().getroot())
         for connection in self.connection_list:
             ET.SubElement(root, 'CONNECTOR', attrib=connection)
@@ -433,22 +487,57 @@ class Composite(Component):
                 pretty_without_header = pretty.split(first_line_in_pretty)[-1]
                 file.write(pretty_without_header)
         os.remove('./ugly_tmp.xml')
+        print('Wrote to ' + path)
 
 
 class Mapping(Composite):
     '''Represents a PowerCenter Mapping transformation'''
-    def __init__(self, name, component_list=[], connection_list=[]):
+    def __init__(self, name, component_list=None, connection_list=None):
         super().__init__(name, component_type='Mapping',
                          component_list=component_list,
                          connection_list=connection_list)
-
-        print(self.component_list)
-        print(self.connection_list)
         
+
+class MappletIO(Component):
+    '''
+    Represents the IO Transformations that Mapplets can contain
+    '''
+    def __init__(self, name, io_type):
+        assert isinstance(io_type, str), 'Expected type str, was {}'.format(type(io_type))
+        assert io_type.lower() in ['input', 'output'], 'io_type must be either \'input\' or \'output\''
+        if io_type.lower() == 'input':
+            super().__init__(name='{}Input'.format(name),
+                                component_type='TRANSFORMATION')
+            self.attributes = {
+                'DESCRIPTION': '',
+                'NAME': 'INPUT',
+                'OBJECTVERSION': '1',
+                'REUSABLE': 'NO',
+                'TYPE': 'Input Transformation',
+                'VERSIONNUMBER': '1'
+            }
+        if io_type.lower() == 'output':
+            super().__init__(name='{}Output'.format(name),
+                                component_type='TRANSFORMATION')
+            self.attributes = {
+                'DESCRIPTION': '',
+                'NAME': 'OUTPUT',
+                'OBJECTVERSION': '1',
+                'REUSABLE': 'NO',
+                'TYPE': 'Output Transformation',
+                'VERSIONNUMBER': '1'
+            }
 
 class Mapplet(Composite):
     '''Represents a PowerCenter Mapplet transformation'''
-    def __init__(self, name, component_list=[], connection_list=[]):
+    def __init__(self, name, component_list=None, connection_list=None):
+
+        # Input and Output is defined before super().__init__() is called
+        # because the components are called in the initaliser.
+        self.Input = MappletIO(name=name, io_type='input')
+
+        self.Output = MappletIO(name=name, io_type='output')
+
         super().__init__(name, component_type='Mapplet',
                          component_list=component_list,
                          connection_list=connection_list)
@@ -462,16 +551,77 @@ class Mapplet(Composite):
             'VERSIONNUMBER': '1'
         }
 
-        InstanceTransformation = Component('Mapplet Transformation', 
-                                             component_type='TRANSFORMATION')
+
+
+    @Composite.component_list.getter
+    def component_list(self):
+        if not self.Input.fields and not self.Output.fields:
+            return self._component_list
+        elif self.Input.fields and not self.Output.fields:
+            return self._component_list + [self.Input]
+        elif not self.Input.fields and self.Output.fields:
+            return self._component_list + [self.Input]
+        else:
+            return self._component_list + [self.Input, self.Output]
+
+    @property
+    def _input_transformations(self):
+        input_fields = []
+        for input_field in self.Input.fields:
+            input_field = deepcopy(input_field)
+            i_f = input_field[1]
+            i_f.update({
+                'MAPPLETGROUP': 'INPUT',
+                'PORTTYPE': 'INPUT',
+                'REF_FIELD': i_f['NAME'],
+                'REF_INSTANCETYPE': 'Input Transformation'
+            })
+
+            input_fields.append(input_field)
+        return input_fields
+
+    @property
+    def _output_transformations(self):
+        output_fields = []
+        for output_field in self.Output.fields:
+            output_field = deepcopy(output_field)
+            o_f = output_field[1]
+            o_f.update({
+                'MAPPLETGROUP': 'OUTPUT',
+                'PORTTYPE': 'OUTPUT',
+                'REF_FIELD': o_f['NAME'],
+                'REF_INSTANCETYPE': 'Output Transformation'
+            })
+
+            output_fields.append(output_field)
+        return output_fields
+
+    @property
+    def instance_transformations(self):
+        pass
+
+    @instance_transformations.getter
+    def instance_transformations(self):
+        '''
+        Mapplets contain a transformation containing information
+        about the mapplet itself. This method returns the required
+        information about these transformations.
+        '''
+        InstanceTransformation = Component('Mapplet Transformation{}'.format(Component._counter), 
+                                            component_type='TRANSFORMATION')
+        Component._counter += 1
+        InstanceTransformation.fields = self._input_transformations + self._output_transformations
+
         InstanceTransformation.attributes = self.attributes
         InstanceTransformation.table_attributes = {
             'Is Active': 'NO',
             'Is Partitionable': 'NO',
             'Form Name': ''}
-        self.instance_transformations.append(
-            InstanceTransformation
-        )
+        return [InstanceTransformation]  
+
+    @instance_transformations.setter
+    def instance_transformations(self, value):
+        pass  
 
     def as_instance(self):
         att = self.attributes
