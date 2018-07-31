@@ -7,7 +7,7 @@ from Canvas import Composite, Mapping, Mapplet
 
 if __name__ == '__main__':
     Exp = Expression()
-    Exp.type = 'Aggregator'
+    # Exp.type = 'Aggregator'
     Exp.name = 'Test'
     Exp.reusable = 'no'
     field_dict = {
@@ -23,8 +23,7 @@ if __name__ == '__main__':
         'SCALE': '0'
         }
     fields = [
-        ('TRANSFORMFIELD', field_dict),
-        ('TABLEATTRIBUTE', {'NAME': 'Tracing Level', 'VALUE': 'Normal'})
+        ('TRANSFORMFIELD', field_dict)
     ]
     Exp.add_fields(fields)
 
@@ -44,8 +43,7 @@ if __name__ == '__main__':
         'SCALE': '0'
         }
     fields1 = [
-        ('TRANSFORMFIELD', field_dict),
-        ('TABLEATTRIBUTE', {'NAME': 'Tracing Level', 'VALUE': 'Normal'})
+        ('TRANSFORMFIELD', field_dict)
     ]
     Exp1.add_fields(fields1)
     # print(Exp1.fields)
@@ -56,10 +54,13 @@ if __name__ == '__main__':
     Comp = Exp.connect_to(Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Comp.write(r'./Comp.xml')
 
-    Map = Mapping(name='m_Map', component_list=component_list)
-    Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
-    Map.write(r'./Map.xml')
+    # Map = Mapping(name='m_Map', component_list=component_list)
+    # Map.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
+    # Map.write(r'./Map.xml')
 
     Mapplet = Mapplet(name='mplt_MAPPLET', component_list=component_list)
     Mapplet.connect(Exp, Exp1, {'ANDEL_AF_LAAN_X': 'LINE_NR'})
     Mapplet.write(r'./Mapplet.xml')
+
+    MapMapplet = Mapping(name='m_MapMapplet', component_list=[Mapplet])
+    MapMapplet.write(r'./MapMapplet.xml')

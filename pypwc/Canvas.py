@@ -19,11 +19,13 @@ class Component(object):
         self._attributes = {}
         self._fields = []
         self._is_composite = False
-        self.is_reusable = False
+        self.is_reusable = 'NO'
 
         self.parents = []
         self.children = []
         self.connections = []
+        self.table_attributes = {}
+
 
         assert isinstance(name, str)
         if name in Component._names:
@@ -62,6 +64,12 @@ class Component(object):
     @attributes.setter
     def attributes(self, value):
         self._attributes = value
+
+    @property
+    def table_attribute_fields(self):
+        return [('TABLEATTRIBUTE',
+                {'NAME': name, 'VALUE': value})
+                for name, value in self.table_attributes.items()]
 
     @property
     def fields(self):
@@ -186,7 +194,8 @@ class Component(object):
         and attributes.'''
         if not self.is_composite:
             root = ET.Element(self.component_type, attrib=self.attributes)
-            self._add_subelements_to_root(root, self.fields)
+            self._add_subelements_to_root(root,
+                                 self.fields+self.table_attribute_fields)
             TREE = ET.ElementTree(root)
             return TREE
         else:   # In the Component base class, the returned XML of composite
@@ -230,7 +239,71 @@ class Composite(Component):
     def __init__(self, name='Composite', component_type='COMPOSITE',
                  component_list=[], connection_list=[]):
         self.component_list = component_list
+        # print(self.component_list)
         self.connection_list = connection_list
+        # print(self.connection_list)
+        self.component_list_names = [comp.name for comp in self.component_list]
+        for connection in self.connection_list:
+            # print(connection)
+            from_component_name = connection['FROMINSTANCE']
+            from_component_field = connection['FROMFIELD']
+            from_component_type = connection['FROMINSTANCETYPE']            
+            to_component_name = connection['TOINSTANCE']
+            to_component_field = connection['TOFIELD']
+            to_component_type = connection['TOINSTANCETYPE']
+
+            assert(from_component_type in Component._allowed_component_types)
+            assert(to_component_type in Component._allowed_component_types)            
+
+            assert(from_component_name in self.component_list_names)
+            assert(to_component_name in self.component_list_names)
+            FromComponent = [comp for comp in self.component_list
+                             if comp.name == from_component_name][0]
+            ToComponent = [comp for comp in self.component_list
+                             if comp.name == to_component_name][0]
+
+            assert(from_component_field 
+                    in FromComponent.get_all_transformfield_names())
+            assert(to_component_field 
+                    in ToComponent.get_all_transformfield_names())
+
+            if ToComponent not in FromComponent.children:
+                FromComponent.children.append(ToComponent)
+            if FromComponent not in ToComponent.parents:
+                ToComponent.parents.append(FromComponent)
+        
+        self.sources = []
+        self.targets = []
+        
+        self._now = datetime.now()
+        year, month, day = self._now.year, self._now.month, self._now.day
+        hour, minute, second = self._now.hour, self._now.minute, self._now.second
+        self._timestamp = '{:02d}/{:02d}/{} {:02d}:{:02d}:{:02d}'.format(
+            month, day, year,
+            hour, minute, second
+        )
+        self.powermart_attributes = {
+            'CREATION_DATE': self._timestamp,
+            'REPOSITORY_VERSION': '182.91'
+            }
+        self.repository_attibutes = {
+            'NAME': 'Dev_Repository',
+            'VERSION': '182',
+            'CODEPAGE': 'MS1252',
+            'DATABASETYPE': 'Microsoft SQL Server'
+        }
+        self.folder_attributes = {
+            'NAME': 'MDW_KRE',
+            'GROUP': '',
+            'OWNER': 'BIX_PWC_DEV',
+            'SHARED': 'NOTSHARED',
+            'DESCRIPTION': '',
+            'PERMISSIONS': 'rwx---r--',
+            'UUID': 'ba3a066c-b172-4542-82f0-337e40e92b32'
+        }
+
+        self.instance_transformations = []
+
         super().__init__(name, component_type)
 
     def connect(self, FromComponent, ToComponent, connect_dict):
@@ -262,30 +335,69 @@ class Composite(Component):
         return [comp for comp in self.component_list if isinstance(comp, Mapplet)]
 
     def get_all_exprmacros(self):
-        return []
+        return [comp for comp in self.component_list
+                if comp.component_type == 'EXPRMACRO']
 
     def get_all_reusable_transformations(self):
         return [comp for comp in self.component_list 
-                if (self.component_type == 'TRANSFORMATION'
-                    and self.is_reusable is True)]
+                if (comp.component_type == 'TRANSFORMATION'
+                    and self.is_reusable == 'YES')]
 
     def get_all_connections(self):
         return []
 
     @property
     def all_non_global_components(self):
-        return self.component_list
+        return [comp for comp in self.component_list
+                if (
+                    comp not in self.get_all_mapplets()
+                    and comp not in self.get_all_exprmacros()
+                    and comp not in self.get_all_reusable_transformations()
+                )]
 
     def as_xml(self):
-        root = ET.Element('COMPOSITE')
-        for component in self.component_list:
-            comp_root = component.as_xml().getroot()
-            root.append(comp_root)
-        for component in self.component_list:
+        powermart = ET.Element('POWERMART', attrib=self.powermart_attributes)
+        repository = ET.Element('REPOSITORY', attrib=self.repository_attibutes)
+        folder = ET.Element('FOLDER', attrib=self.folder_attributes)
+
+        powermart.append(repository)
+        repository.append(folder)
+        root = folder
+
+        for source in self.sources:
+            root.append(source.as_xml().getroot())
+        for target in self.targets:
+            root.append(target.as_xml().getroot())
+        for exprmacro in self.get_all_exprmacros():
+            root.append(exprmacro.as_xml().getroot())
+        for reusable in self.get_all_reusable_transformations():
+            root.append(reusable.as_xml().getroot())
+        for mapplet in self.get_all_mapplets():
+            mapplet_folder = mapplet.as_xml().findall('./REPOSITORY/FOLDER/*')
+            for element in mapplet_folder:
+                root.append(element)
+
+        instance = ET.Element(self.component_type.upper(), attrib={
+            'DESCRIPTION': '{} made with pypwc (contact SBS for more information)'.format(self.component_type),
+            'ISVALID': 'YES',
+            'NAME': self.name,
+            'OBJECTVERSION': '1',
+            'VERSIONNUMBER': '1'
+        })
+        root.append(instance)
+        root = instance
+    
+        for component in self.all_non_global_components:
+            root.append(component.as_xml().getroot())
+        for component in self.instance_transformations:
+            root.append(component.as_xml().getroot())
+        for component in self.all_non_global_components+self.get_all_mapplets():
             root.append(component.as_instance().getroot())
         for connection in self.connection_list:
             ET.SubElement(root, 'CONNECTOR', attrib=connection)
-        return ET.ElementTree(root)
+        ET.SubElement(root, 'ERPINFO')
+        
+        return ET.ElementTree(powermart)
 
     def write(self, path, encoding='utf-8'):
         '''
@@ -324,162 +436,56 @@ class Composite(Component):
 
 
 class Mapping(Composite):
-    '''Docstring'''
+    '''Represents a PowerCenter Mapping transformation'''
     def __init__(self, name, component_list=[], connection_list=[]):
         super().__init__(name, component_type='Mapping',
                          component_list=component_list,
                          connection_list=connection_list)
-        self.sources = []
-        self.targets = []
-    
-    def as_xml(self):
-        now = datetime.now()
-        year, month, day = now.year, now.month, now.day
-        hour, minute, second = now.hour, now.minute, now.second
-        timestamp = '{:02d}/{:02d}/{} {:02d}:{:02d}:{:02d}'.format(
-            month, day, year,
-            hour, minute, second
-        )
-        powermart_attributes = {
-            'CREATION_DATE': timestamp,
-            'REPOSITORY_VERSION': '182.91'
-            }
-        powermart = ET.Element('POWERMART', attrib=powermart_attributes)
+
+        print(self.component_list)
+        print(self.connection_list)
         
-        repository_attibutes = {
-            'NAME': 'Dev_Repository',
-            'VERSION': '182',
-            'CODEPAGE': 'MS1252',
-            'DATABASETYPE': 'Microsoft SQL Server'
-        }
-        repository = ET.Element('REPOSITORY', attrib=repository_attibutes)
-
-        folder_attributes = {
-            'NAME': 'MDW_KRE',
-            'GROUP': '',
-            'OWNER': 'BIX_PWC_DEV',
-            'SHARED': 'NOTSHARED',
-            'DESCRIPTION': '',
-            'PERMISSIONS': 'rwx---r--',
-            'UUID': 'ba3a066c-b172-4542-82f0-337e40e92b32'
-        }
-        folder = ET.Element('FOLDER', attrib=folder_attributes)
-
-        powermart.append(repository)
-        repository.append(folder)
-        root = folder
-
-        for source in self.sources:
-            root.append(source.as_xml().getroot())
-        for target in self.targets:
-            root.append(target.as_xml().getroot())
-        for exprmacro in self.get_all_exprmacros():
-            root.append(exprmacro.as_xml().getroot())
-        for reusable in self.get_all_reusable_transformations():
-            root.append(reusable.as_xml().getroot())
-        for mapplet in self.get_all_mapplets():
-            root.append(mapplet.as_xml().getroot())
-
-        mapping = ET.Element('MAPPING', attrib={
-            'DESCRIPTION': '',
-            'ISVALID': 'YES',
-            'NAME': self.name,
-            'OBJECTVERSION': '1',
-            'VERSIONNUMBER': '1'
-        })
-        root.append(mapping)
-        root = mapping
-    
-        for component in self.all_non_global_components:
-            root.append(component.as_xml().getroot())
-        for component in self.all_non_global_components:
-            root.append(component.as_instance().getroot())
-        for connection in self.connection_list:
-            ET.SubElement(root, 'CONNECTOR', attrib=connection)
-        ET.SubElement(root, 'ERPINFO')
-        
-        return ET.ElementTree(powermart)
-
-
-    
-
-
-    
 
 class Mapplet(Composite):
-    '''Docstring'''
+    '''Represents a PowerCenter Mapplet transformation'''
     def __init__(self, name, component_list=[], connection_list=[]):
         super().__init__(name, component_type='Mapplet',
                          component_list=component_list,
                          connection_list=connection_list)
-        self.sources = []
-        self.targets = []
-    
-    def as_xml(self):
-        now = datetime.now()
-        year, month, day = now.year, now.month, now.day
-        hour, minute, second = now.hour, now.minute, now.second
-        timestamp = '{:02d}/{:02d}/{} {:02d}:{:02d}:{:02d}'.format(
-            month, day, year,
-            hour, minute, second
-        )
-        powermart_attributes = {
-            'CREATION_DATE': timestamp,
-            'REPOSITORY_VERSION': '182.91'
-            }
-        powermart = ET.Element('POWERMART', attrib=powermart_attributes)
-        
-        repository_attibutes = {
-            'NAME': 'Dev_Repository',
-            'VERSION': '182',
-            'CODEPAGE': 'MS1252',
-            'DATABASETYPE': 'Microsoft SQL Server'
-        }
-        repository = ET.Element('REPOSITORY', attrib=repository_attibutes)
 
-        folder_attributes = {
-            'NAME': 'MDW_KRE',
-            'GROUP': '',
-            'OWNER': 'BIX_PWC_DEV',
-            'SHARED': 'NOTSHARED',
-            'DESCRIPTION': '',
-            'PERMISSIONS': 'rwx---r--',
-            'UUID': 'ba3a066c-b172-4542-82f0-337e40e92b32'
-        }
-        folder = ET.Element('FOLDER', attrib=folder_attributes)
-
-        powermart.append(repository)
-        repository.append(folder)
-        root = folder
-
-        for source in self.sources:
-            root.append(source.as_xml().getroot())
-        for target in self.targets:
-            root.append(target.as_xml().getroot())
-        for exprmacro in self.get_all_exprmacros():
-            root.append(exprmacro.as_xml().getroot())
-        for reusable in self.get_all_reusable_transformations():
-            root.append(reusable.as_xml().getroot())
-        for mapplet in self.get_all_mapplets():
-            root.append(mapplet.as_xml().getroot())
-
-        mapping = ET.Element('MAPPLET', attrib={
-            'DESCRIPTION': '',
-            'ISVALID': 'YES',
+        self.attributes = {
+            'DESCRIPTION': '',  
             'NAME': self.name,
             'OBJECTVERSION': '1',
+            'REUSABLE': 'YES',
+            'TYPE': 'Mapplet',
             'VERSIONNUMBER': '1'
-        })
-        root.append(mapping)
-        root = mapping
+        }
+
+        InstanceTransformation = Component('Mapplet Transformation', 
+                                             component_type='TRANSFORMATION')
+        InstanceTransformation.attributes = self.attributes
+        InstanceTransformation.table_attributes = {
+            'Is Active': 'NO',
+            'Is Partitionable': 'NO',
+            'Form Name': ''}
+        self.instance_transformations.append(
+            InstanceTransformation
+        )
+
+    def as_instance(self):
+        att = self.attributes
+        attribute_dict = {
+            'DESCRIPTION': '' if not att['DESCRIPTION'] else att['DESCRIPTION'],
+            'NAME': '' if not att['NAME'] else att['NAME'],
+            'REUSABLE': '' if not att['REUSABLE'] else att['REUSABLE'],
+            'TRANSFORMATION_NAME': '' if not att['NAME'] else att['NAME'],
+            'TRANSFORMATION_TYPE': '' if not att['TYPE'] else att['TYPE'],
+            'TYPE': '' if not self.component_type else self.component_type
+        }
+        root = ET.Element('INSTANCE', attrib=attribute_dict)
+        return ET.ElementTree(root)
+
     
-        for component in self.all_non_global_components:
-            root.append(component.as_xml().getroot())
-        for component in self.all_non_global_components:
-            root.append(component.as_instance().getroot())
-        for connection in self.connection_list:
-            ET.SubElement(root, 'CONNECTOR', attrib=connection)
-        ET.SubElement(root, 'ERPINFO')
-        
-        return ET.ElementTree(powermart)
+    
 

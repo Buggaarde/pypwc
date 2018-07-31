@@ -20,7 +20,7 @@ class Transformation(Component, metaclass=ABCMeta):
 
         super().__init__(name=name, component_type='TRANSFORMATION')
         self.fields = []
-        
+        self.table_attributes = {'Tracing Level': 'Normal'}
 
 
     ## Begin properties section
@@ -89,10 +89,10 @@ class Transformation(Component, metaclass=ABCMeta):
         return {
             'DESCRIPTION' : self._description,
             'NAME': self._name,
-            'OBJECTVERSION': self._object_version,
-            'REUSABLE': self._reusable,
+            'OBJECTVERSION': self.object_version,
+            'REUSABLE': self.is_reusable,
             'TYPE': self._type,
-            'VERSIONNUMBER': self._version_number
+            'VERSIONNUMBER': self.version_number
         }
 
     def as_instance(self):
